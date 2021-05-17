@@ -1,0 +1,24 @@
+resources:
+- ../.kube.yaml
+patchesStrategicMerge:
+- |-
+    apiVersion: apps/v1
+    kind: DaemonSet
+    metadata:
+      name: datadog-agent
+      namespace: datadog-agent
+    spec:
+      template:
+        metadata:
+          labels:
+            app: datadog-agent
+          name: datadog-agent
+          annotations:
+            sidecar.istio.io/inject: "false"
+            vault.hashicorp.com/agent-inject: "true"
+            vault.hashicorp.com/role: "datadog"
+            vault.hashicorp.com/agent-inject-secret-dd: "nytm/nirmata/system-credentials/secret/datadog-cluster-002"
+            vault.hashicorp.com/agent-inject-template-dd: |
+              {{ with secret "nytm/nirmata/system-credentials/secret/datadog-cluster-002" -}}
+                export DD_API_KEY="{{ .Data.data.api_key }}"
+              {{- end }}

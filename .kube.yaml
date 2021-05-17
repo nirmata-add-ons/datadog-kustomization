@@ -1,0 +1,141 @@
+# apiVersion: v1
+# kind: Namespace
+# metadata:
+#   name: datadog
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: datadog-agent
+  namespace: datadog-agent
+spec:
+  minReadySeconds: 0
+  updateStrategy:
+    rollingUpdate:
+      maxUnavailable: 15%
+    type: RollingUpdate
+  selector:
+    matchLabels:
+      app: datadog-agent
+  template:
+    metadata:
+      labels:
+        app: datadog-agent
+        demo: test-changes5
+      name: datadog-agent
+      annotations:
+        sidecar.istio.io/inject: "false"
+        vault.hashicorp.com/agent-inject: "true"
+        vault.hashicorp.com/role: "datadog"
+        vault.hashicorp.com/agent-inject-secret-dd: "nytm/nirmata/system-credentials/secret/datadog"
+        vault.hashicorp.com/agent-inject-template-dd: |
+          {{ with secret "nytm/nirmata/system-credentials/secret/datadog" -}}
+            export DD_API_KEY="{{ .Data.data.api_key }}"
+          {{- end }}
+    spec:
+      serviceAccountName: datadog-agent
+      containers:
+      - image: nirmata/hello-world:green
+        name: datadog-agent
+        ports:
+          - {containerPort: 8125, name: dogstatsdport, protocol: UDP}
+          - {containerPort: 8126, name: traceport, protocol: TCP}
+        env:
+          - name: DD_CLUSTER_AGENT_ENABLED
+            value: "true"
+          - {name: KUBERNETES, value: "true"}
+          - {name: DD_HEALTH_PORT, value: "5555"}
+          - name: DD_KUBERNETES_KUBELET_HOST
+            valueFrom:
+              fieldRef:
+                fieldPath: status.hostIP
+          - {name: DOCKER_HOST, value: unix:///host/var/run/docker.sock}
+          - name: DD_APM_ENABLED
+            value: "true"
+          - name: DD_TAGS
+            value: "nirmata_poc:true nirmata_poc_cloud:gcp"
+          - name: DD_CHECKS_TAG_CARDINALITY
+            value: orchestrator
+          - name: DD_PROCESS_AGENT_ENABLED
+            value: "true"
+          - name: DD_KUBERNETES_POD_LABELS_AS_TAGS
+            value: '{"app":"kube_app", "env":"kube_env", "repository":"kube_repository", "app.kubernetes.io/name":"app.kubernetes.io/name", "app.kubernetes.io/instance":"app.kubernetes.io/instance", "app.kubernetes.io/version":"app.kubernetes.io/version", "app.kubernetes.io/component":"app.kubernetes.io/component", "app.kubernetes.io/part-of":"app.kubernetes.io/part-of", "app.kubernetes.io/managed-by":"app.kubernetes.io/managed-by"}'
+          - name: DD_APM_NON_LOCAL_TRAFFIC
+            value: "true"
+          - name: DD_DOGSTATSD_NON_LOCAL_TRAFFIC
+            value: "true"
+          - name: DD_FORCE_TLS_12
+            value: "true"
+          - name: DD_STRIP_PROCESS_ARGS
+            value: "true"
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "200m"
+          limits:
+            memory: "256Mi"
+            cpu: "200m"
+        volumeMounts:
+          - {name: dockersocketdir, mountPath: /host/var/run}
+          - {name: procdir, mountPath: /host/proc, readOnly: true}
+          - {name: cgroups, mountPath: /host/sys/fs/cgroup, readOnly: true}
+          - {name: s6-run, mountPath: /var/run/s6}
+          # TODO:
+          - name: passwd
+            mountPath: /etc/passwd
+            readOnly: true
+      tolerations:
+       - effect: NoExecute
+         operator: Exists
+       - effect: NoSchedule
+         operator: Exists
+      volumes:
+        - {name: dockersocketdir, hostPath: {path: /var/run}}
+        - {name: procdir, hostPath: {path: /proc}}
+        - {name: cgroups, hostPath: {path: /sys/fs/cgroup}}
+        - {name: s6-run, emptyDir: {}}
+        # TODO:
+        - hostPath:
+            path: /etc/passwd
+          name: passwd
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: datadog-agent
+  namespace: datadog-agent
+rules:
+- apiGroups:  # This is required by the agent to query the Kubelet API.
+  - ""
+  resources:
+  - nodes/metrics
+  - nodes/spec
+  - nodes/proxy # Required to get /pods
+  - nodes/stats
+  verbs:
+  - get
+- nonResourceURLs:
+  - "/version"
+  - "/healthz"
+  - "/metrics"
+  verbs:
+  - get
+---
+kind: ServiceAccount
+apiVersion: v1
+metadata:
+  name: datadog-agent
+  namespace: datadog-agent
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: datadog-agent
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: datadog-agent
+subjects:
+- kind: ServiceAccount
+  name: datadog-agent
+  namespace: datadog-agent
